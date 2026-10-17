@@ -46,6 +46,13 @@ function toast(msg, ms = 2200) {
   toastTimer = setTimeout(() => el.classList.add('hidden'), ms);
 }
 
+/** 立刻收起提示（切换出行方式时用，避免残留旧文案） */
+function hideToast() {
+  clearTimeout(toastTimer);
+  const el = $('#toast');
+  if (el) el.classList.add('hidden');
+}
+
 /* ============================================================
  * 首页
  * ============================================================ */
@@ -103,9 +110,13 @@ function initCreate() {
       b.classList.add('on');
       state.mode = b.dataset.mode;
       // 徒步/骑行：OSRM 公共服务器只有汽车路网，必须提前告知
+      // 注意要点明是「哪种方式」的估算，且切回自驾时不应残留提示
       const spd = ROUTING.SPEED[state.mode];
       if (spd) {
-        toast(`本版徒步/骑行路线按公路网规划，时长按 ${spd} km/h 估算`, 3200);
+        const label = state.mode === 'hike' ? '徒步' : '骑行';
+        toast(`${label}模式：路线按公路网规划，时长按 ${spd} km/h 估算`, 3200);
+      } else {
+        hideToast();   // 切回自驾时立刻收起旧提示
       }
     });
   });
@@ -582,8 +593,13 @@ function renderNavReport(r, stale) {
   // 先把总分钟数取整，再拆成时/分，避免出现 13:60 这种非法时间
   const arriveTotalMin = Math.round(arriveH * 60);
   const arriveHM = Math.floor(arriveTotalMin / 60);
-  const arriveText = `${p2(arriveHM % 24)}:${p2(arriveTotalMin % 60)}`
-    + (arriveHM >= 24 ? '（次日）' : '');
+  const arriveClock = `${p2(arriveHM % 24)}:${p2(arriveTotalMin % 60)}`;
+  // 具体日期：出发日为基准，加上跨过的天数
+  const arriveDayOffset = Math.floor(arriveHM / 24);
+  const arriveDate = addDays(r.date, arriveDayOffset);
+  const arriveWeek = weekOf(arriveDate);
+  const dayTag = arriveDayOffset === 0 ? '' : (arriveDayOffset === 1 ? ' · 次日' : ` · 第 ${arriveDayOffset + 1} 天`);
+  const arriveText = `${arriveDate.replace(/-/g, '/')} ${arriveWeek} ${arriveClock}${dayTag}`;
 
   $('#reportBody').innerHTML = `
     <div class="card map-card">
@@ -1006,6 +1022,13 @@ function openTrip(id) {
 /* ---------------- 工具 ---------------- */
 
 function pad(n) { return String(n).padStart(2, '0'); }
+
+/** 'YYYY-MM-DD' → '周五' */
+function weekOf(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d)) return '';
+  return '周' + ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+}
 
 /** 分钟 → "3 小时 20 分" / "2 天 5 小时" */
 function fmtDuration(minutes) {
