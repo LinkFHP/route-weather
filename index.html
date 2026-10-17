@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<title>路线天气体检</title>
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="css/style.css">
+<script>
+/* 早期错误捕获：把 JS 错误显示在页面上，避免"白屏无提示" */
+window.__errs = [];
+window.addEventListener('error', function (e) {
+  window.__errs.push((e.message || 'error') + ' @ ' + ((e.filename || '').split('/').pop() || '?') + ':' + (e.lineno || '?')
+    + (e.error && e.error.stack ? '\n' + String(e.error.stack).split('\n').slice(0, 6).join('\n') : ''));
+  var paint = function () {
+    var d = document.getElementById('__errbar');
+    if (!d) {
+      d = document.createElement('div');
+      d.id = '__errbar';
+      d.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#b91c1c;color:#fff;'
+        + 'font:12px/1.5 monospace;padding:8px 10px;white-space:pre-wrap;max-height:40vh;overflow:auto';
+      document.body.appendChild(d);
+    }
+    d.textContent = '脚本错误：\n' + window.__errs.join('\n');
+  };
+  if (document.body) paint();
+  else document.addEventListener('DOMContentLoaded', paint);
+});
+</script>
+</head>
+<body>
+
+<header class="topbar">
+  <h1 id="topTitle">路线天气体检</h1>
+</header>
+
+<main id="app">
+
+  <!-- ========== 首页 ========== -->
+  <section id="view-home" class="view active">
+    <p class="tagline">输入一条路线，得到一份一眼能看懂的天气体检报告</p>
+    <p class="tagline-sub">不是导航，不是预警，是「行程的天气体检」</p>
+
+    <button class="btn btn-primary btn-lg" id="btnNew">＋ 新建行程体检</button>
+
+    <div id="homeEmpty" class="empty">
+      <p>还没有行程</p>
+      <p class="small">点上面的按钮，用内置点位快速试一条：<br>雅安 → 天全 → 泸定</p>
+    </div>
+
+    <div id="homeList" class="list hidden">
+      <h2 class="sec-title">我的行程</h2>
+      <div id="historyList"></div>
+    </div>
+  </section>
+
+  <!-- ========== 创建行程 ========== -->
+  <section id="view-create" class="view">
+    <div class="field">
+      <label>出行日期</label>
+      <input type="date" id="inpDate">
+    </div>
+
+    <div class="field">
+      <label>体检模式</label>
+      <div class="seg" id="segCheckMode">
+        <button data-check="point" class="on">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s6.5-5.6 6.5-10.5a6.5 6.5 0 10-13 0C5.5 15.4 12 21 12 21z"/><circle cx="12" cy="10.5" r="2.3"/></svg>
+          点位模式
+        </button>
+        <button data-check="nav">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="5.5" r="2.5"/><path d="M8 18.5h6a4 4 0 000-8h-4a4 4 0 010-8h6"/></svg>
+          导航模式
+        </button>
+      </div>
+      <p class="mode-desc" id="modeDesc">按你输入的固定点位评估，所有点位取同一时刻的天气。</p>
+    </div>
+
+    <div class="field hidden" id="fieldDepart">
+      <label>出发时刻</label>
+      <select id="selDepart"></select>
+      <p class="mode-desc">自动推荐 = 遍历 0–23 点出发，取「全程最低分」最高的那个时刻。</p>
+    </div>
+
+    <div class="field">
+      <label>出行方式</label>
+      <div class="seg" id="segMode">
+        <button data-mode="drive" class="on">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l1.6-4.2A2 2 0 017.5 7h9a2 2 0 011.9 1.3L20 12.5"/><path d="M4 12.5h16v4a1 1 0 01-1 1h-1.6a1 1 0 01-1-1v-.6H7.6v.6a1 1 0 01-1 1H5a1 1 0 01-1-1v-4z"/><circle cx="7.6" cy="14.6" r=".9"/><circle cx="16.4" cy="14.6" r=".9"/></svg>
+          自驾
+        </button>
+        <button data-mode="hike">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="4.6" r="1.9"/><path d="M11 9l2.6 1.4L15 14M13.6 10.4L12 15l2.6 2 .6 3.4M12 15l-2.2 2-1 3.4M14.2 8.2l-3 1.2"/></svg>
+          徒步
+        </button>
+        <button data-mode="bike">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.8" cy="16" r="3.1"/><circle cx="18.2" cy="16" r="3.1"/><path d="M5.8 16l4.3-7.2h4.1L18.2 16M9 8.8h6"/></svg>
+          骑行
+        </button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>地图选点 <span class="small">（点地图任意位置可直接添加点位）</span></label>
+      <div id="createMap" class="map map-create"></div>
+      <div class="map-hint">底图 © OpenStreetMap contributors · 仅供路线示意</div>
+    </div>
+
+    <div class="field">
+      <label>路线点位 <span class="small">（起点 → 途经点 → 终点，最多 5 个）</span></label>
+      <div id="pointList"></div>
+      <div class="row-btns">
+        <button class="btn btn-ghost" id="btnAddPoint">＋ 添加点位</button>
+        <button class="btn btn-ghost" id="btnDemo">载入示例路线</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>手动输入坐标（可选，内置点位搜不到时用）</label>
+      <div class="coord-row">
+        <input type="text" id="inpLat" placeholder="纬度 如 29.98" inputmode="decimal">
+        <input type="text" id="inpLon" placeholder="经度 如 103.00" inputmode="decimal">
+        <input type="text" id="inpName" placeholder="名称（可选）">
+        <button class="btn btn-ghost" id="btnAddCoord">添加</button>
+      </div>
+    </div>
+
+    <button class="btn btn-primary btn-lg" id="btnCheckup">开始体检</button>
+    <p class="hint">仅评估你输入的点位，点位之间的路段不在评估范围内。</p>
+  </section>
+
+  <!-- ========== 体检报告 ========== -->
+  <section id="view-report" class="view">
+    <div id="reportBody"></div>
+  </section>
+
+</main>
+
+<!-- 点位选择弹层 -->
+<div id="sheet" class="sheet hidden">
+  <div class="sheet-panel">
+    <div class="sheet-head">
+      <span id="sheetTitle">选择点位</span>
+      <button class="btn-close" id="sheetClose">✕</button>
+    </div>
+    <input type="text" id="sheetSearch" placeholder="搜索点位名称…" class="search">
+    <div id="sheetRegions" class="regions"></div>
+    <div id="sheetList" class="sheet-list"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="js/points.js"></script>
+<script src="js/api.js"></script>
+<script src="js/routing.js"></script>
+<script src="js/scoring.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/map.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
