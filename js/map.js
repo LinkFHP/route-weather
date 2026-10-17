@@ -12,14 +12,9 @@
  * gcj: true 表示该底图使用 GCJ-02（中国国测局）坐标系，
  *      绘制前必须把 WGS-84 坐标偏移过去，否则点位会偏几百米。
  *      高德/腾讯 = GCJ-02；OSM/Esri/天地图 = WGS-84（可直接用）
+ *
+ * TIANDITU_KEY 定义在 js/config.js（地图与地名搜索共用）
  */
-/**
- * 天地图 Key（可选，强烈推荐）
- * 申请：https://console.tianditu.gov.cn/  免费，手机号注册
- * 填上后会自动出现在底图列表最前：官方底图、中文注记、WGS-84 对齐、
- * 川西有地形（不像高德那样大片空白）。
- */
-const TIANDITU_KEY = 'afa2745bbeb43efa996c6d1b75e9e98a';
 
 function tdtUrl(layer) {
   return `https://t{s}.tianditu.gov.cn/${layer}_w/wmts`

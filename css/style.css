@@ -223,7 +223,9 @@ select {
 /* ---------------- 底部弹层（高德式上滑面板） ---------------- */
 .sheet {
   position: fixed; inset: 0; background: rgba(0, 0, 0, .4);
-  z-index: 50; display: flex; align-items: flex-end;
+  /* 必须高于 Leaflet 内部图层（其 pane 的 z-index 可达 800），否则地图会盖住面板 */
+  z-index: 1000;
+  display: flex; align-items: flex-end;
   animation: fadeIn .18s ease backwards;
 }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -269,6 +271,43 @@ select {
 .si-name { font-weight: 600; font-size: 14.5px; }
 .si-region { font-size: 11.5px; color: var(--ink-3); }
 .si-used { margin-left: auto; font-size: 11px; color: var(--ink-3); }
+
+/* ---------------- 全国地名搜索（天地图） ---------------- */
+.sheet-remote { flex-shrink: 0; }
+.sheet-remote:empty { display: none; }
+
+.remote-title {
+  font-size: 11.5px; font-weight: 700; color: var(--brand-dark);
+  padding: 2px 2px 6px;
+}
+
+.remote-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 11px 10px; margin-bottom: 6px;
+  background: var(--brand-soft);
+  border-radius: 10px; cursor: pointer;
+  transition: background .15s ease, transform .12s ease;
+}
+.remote-item:active { background: #D7EAFF; transform: scale(.99); }
+
+.ri-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--brand); flex-shrink: 0;
+  box-shadow: 0 0 0 3px rgba(0, 145, 255, .18);
+}
+.ri-name { font-weight: 600; font-size: 14px; color: var(--ink); }
+.ri-coord { margin-left: auto; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.ri-add {
+  font-size: 12px; font-weight: 700; color: #fff;
+  background: var(--brand); border-radius: 999px;
+  padding: 3px 10px; flex-shrink: 0;
+}
+
+.remote-hint {
+  font-size: 12px; color: var(--ink-3);
+  padding: 6px 2px 10px; line-height: 1.6;
+}
+.remote-hint.err { color: var(--caution); }
 
 /* ---------------- 结论卡（高德路线卡风格） ---------------- */
 .summary { padding: 16px; }
@@ -421,7 +460,7 @@ select {
   position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%);
   background: rgba(26, 26, 26, .9); color: #fff;
   padding: 10px 18px; border-radius: 10px; font-size: 13.5px;
-  z-index: 100; max-width: 84vw; text-align: center;
+  z-index: 3000; max-width: 84vw; text-align: center;
   box-shadow: var(--shadow-float);
   animation: toastIn .24s cubic-bezier(.34,1.56,.64,1) backwards;
 }
@@ -463,10 +502,16 @@ body.large-text .ht-col { flex-basis: 48px; }
 .map-report { height: 272px; }
 .map-create { height: 240px; }
 .map-card { padding: 8px 8px 6px; }
-.map-wrap { position: relative; }
+.map-wrap {
+  position: relative;
+  /* 建立独立层叠上下文：Leaflet 内部 pane 的 z-index(最高 800) 被限制在这里，
+     不会跑到弹层/提示上面去 */
+  z-index: 0;
+  isolation: isolate;
+}
 
 .map-toggle {
-  position: absolute; top: 8px; right: 8px; z-index: 500;
+  position: absolute; top: 8px; right: 8px; z-index: 1100;
   padding: 6px 12px; border-radius: 999px; border: 0;
   background: rgba(255,255,255,.96); color: var(--ink);
   font-size: 12px; font-weight: 600; font-family: inherit;
@@ -543,7 +588,7 @@ body.large-text .ht-col { flex-basis: 48px; }
   align-items: center; justify-content: center;
   gap: 6px; padding: 18px; text-align: center;
   background: rgba(233, 238, 243, .96);
-  border-radius: 12px; z-index: 600;
+  border-radius: 12px; z-index: 1200;
 }
 .mf-title { font-size: 14px; font-weight: 700; color: var(--ink); }
 .mf-sub { font-size: 11.5px; color: var(--ink-3); line-height: 1.5; max-width: 260px; }

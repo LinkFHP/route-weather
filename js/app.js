@@ -224,12 +224,84 @@ function openSheet() {
   if (state.points.length >= 5) { toast('最多 5 个点位'); return; }
   $('#sheet').classList.remove('hidden');
   $('#sheetSearch').value = '';
+  const rb = $('#sheetRemote');
+  if (rb) rb.innerHTML = '';
+  remoteToken++;
   renderSheetRegions();
   renderSheetList();
 }
 
 function closeSheet() {
   $('#sheet').classList.add('hidden');
+  clearTimeout(remoteTimer);
+  remoteToken++;
+  const rb = $('#sheetRemote');
+  if (rb) rb.innerHTML = '';
+}
+
+/* ---------------- 全国地名搜索（天地图） ---------------- */
+
+let remoteToken = 0;
+let remoteTimer = null;
+const REMOTE_MIN_LEN = 2;
+
+/** 输入变化时做防抖，避免每敲一个字就发请求（天地图免费额度有限） */
+function scheduleRemoteSearch() {
+  clearTimeout(remoteTimer);
+  const box = $('#sheetRemote');
+  if (!box) return;
+
+  const kw = ($('#sheetSearch').value || '').trim();
+
+  if (kw.length < REMOTE_MIN_LEN) {
+    box.innerHTML = '';
+    remoteToken++;
+    return;
+  }
+  if (!Geocode.enabled) {
+    box.innerHTML = '';
+    return;
+  }
+
+  box.innerHTML = `<div class="remote-hint">正在搜索「${escapeHtml(kw)}」…</div>`;
+  remoteTimer = setTimeout(() => runRemoteSearch(kw), 450);
+}
+
+async function runRemoteSearch(kw) {
+  const box = $('#sheetRemote');
+  if (!box) return;
+  const my = ++remoteToken;
+  const list = await Geocode.search(kw);
+  if (my !== remoteToken || !box.isConnected) return;
+
+  if (list === null) {
+    box.innerHTML = `<div class="remote-hint err">地名搜索失败（网络或额度限制）。可在下面选内置点位，或用「手动输入坐标」。</div>`;
+    return;
+  }
+  if (!list.length) {
+    box.innerHTML = `<div class="remote-hint">没搜到「${escapeHtml(kw)}」，试试更完整的名称（如「稻城亚丁」「上海外滩」）</div>`;
+    return;
+  }
+
+  box.innerHTML = `<div class="remote-title">全国搜索 · 天地图</div>` + list.map((it, i) => `
+    <div class="remote-item" data-i="${i}">
+      <span class="ri-dot"></span>
+      <span class="ri-name">${escapeHtml(it.name)}</span>
+      <span class="ri-coord">${it.lat.toFixed(3)}, ${it.lon.toFixed(3)}</span>
+      <span class="ri-add">添加</span>
+    </div>`).join('');
+
+  $$('#sheetRemote .remote-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const it = list[Number(el.dataset.i)];
+      if (!it) return;
+      if (state.points.length >= 5) { toast('最多 5 个点位'); return; }
+      state.points.push({ name: it.name, lat: it.lat, lon: it.lon });
+      renderPointList();
+      closeSheet();
+      toast('已添加：' + it.name);
+    });
+  });
 }
 
 function renderSheetRegions() {
@@ -925,7 +997,10 @@ document.addEventListener('DOMContentLoaded', () => {
     showView('create');
   });
   $('#sheetClose').addEventListener('click', closeSheet);
-  $('#sheetSearch').addEventListener('input', renderSheetList);
+  $('#sheetSearch').addEventListener('input', () => {
+    renderSheetList();
+    scheduleRemoteSearch();
+  });
   $('#sheet').addEventListener('click', e => {
     if (e.target.id === 'sheet') closeSheet();
   });
@@ -977,6 +1052,24 @@ document.addEventListener('DOMContentLoaded', () => {
     renderPointList();
     showView('create');
     runCheckup();
+  }
+
+  // ?sheet=1 直接打开点位选择弹层（便于演示与截图核对层叠顺序）
+  // 可选 &q=稻城亚丁 预填搜索词，直接触发全国地名搜索
+  if (params.get('sheet') === '1') {
+    if (!state.points.length) state.points = loadNames(DEMO_ROUTE.join(','));
+    setDate();
+    renderPointList();
+    showView('create');
+    setTimeout(() => {
+      openSheet();
+      const q = params.get('q');
+      if (q) {
+        $('#sheetSearch').value = q;
+        renderSheetList();
+        scheduleRemoteSearch();
+      }
+    }, 250);
   }
 
   // 诊断模式：?demo=1&diag=1 —— 报告渲染完成后，把溢出元素显示在顶部横幅
