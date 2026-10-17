@@ -102,6 +102,11 @@ function initCreate() {
       $$('#segMode button').forEach(x => x.classList.remove('on'));
       b.classList.add('on');
       state.mode = b.dataset.mode;
+      // 徒步/骑行：OSRM 公共服务器只有汽车路网，必须提前告知
+      const spd = ROUTING.SPEED[state.mode];
+      if (spd) {
+        toast(`本版徒步/骑行路线按公路网规划，时长按 ${spd} km/h 估算`, 3200);
+      }
     });
   });
 
@@ -472,6 +477,28 @@ async function checkupNavigation() {
       return;
     }
 
+    // 1.5) 行程超出预报有效期 → 评估本身没有意义，直接拦下
+    if (route.overHorizon) {
+      const days = route.travelDays;
+      const dist = (route.distance / 1000).toFixed(0);
+      const spd = route.speedKmh ? `（按 ${route.speedKmh} km/h 估算）` : '';
+      $('#reportBody').innerHTML = `
+        <div class="errbox">
+          <p>😕 这趟行程超出了天气预报的有效范围</p>
+          <p class="small">
+            ${modeText(state.mode)}模式 · 路网距离约 ${dist} km${spd}<br>
+            预计需要约 <b>${days < 10 ? days.toFixed(1) : Math.round(days)} 天</b>，
+            而本作品的评估只使用未来 ${route.horizonDays} 天的预报。
+          </p>
+          <p class="small" style="margin-top:12px">
+            等你走到终点时，天气早已完全不同，这份体检没有参考意义。<br>
+            建议：<b>换一条短一些的路线</b>，或改用<b>自驾</b>出行方式。
+          </p>
+          <button class="btn btn-ghost" onclick="showView('create')">返回修改</button>
+        </div>`;
+      return;
+    }
+
     // 2) 沿路等距采样
     const n = GEO.sampleCountFor(route.duration);
     const raw = GEO.sampleAlong(route.coords, n);
@@ -552,8 +579,11 @@ function renderNavReport(r, stale) {
   const worst = r.points[r.worstIndex];
 
   const arriveH = r.route.arriveHour;
-  const arriveText = `${p2(arriveH % 24)}:${p2(Math.round((arriveH % 1) * 60))}`
-    + (arriveH >= 24 ? '（次日）' : '');
+  // 先把总分钟数取整，再拆成时/分，避免出现 13:60 这种非法时间
+  const arriveTotalMin = Math.round(arriveH * 60);
+  const arriveHM = Math.floor(arriveTotalMin / 60);
+  const arriveText = `${p2(arriveHM % 24)}:${p2(arriveTotalMin % 60)}`
+    + (arriveHM >= 24 ? '（次日）' : '');
 
   $('#reportBody').innerHTML = `
     <div class="card map-card">
@@ -577,10 +607,10 @@ function renderNavReport(r, stale) {
         </div>
       </div>
 
-      <div class="kv"><span class="kv-k">总里程</span>
+      <div class="kv"><span class="kv-k">路网距离</span>
         <span class="kv-v strong">${r.route.distanceKm.toFixed(0)} km</span></div>
-      <div class="kv"><span class="kv-k">预计时长</span>
-        <span class="kv-v">${Math.floor(r.route.durationMin / 60)} 小时 ${Math.round(r.route.durationMin % 60)} 分</span></div>
+      <div class="kv"><span class="kv-k">预计时长${r.route.speedKmh ? `（按 ${r.route.speedKmh} km/h）` : ''}</span>
+        <span class="kv-v">${fmtDuration(r.route.durationMin)}</span></div>
       <div class="kv"><span class="kv-k">出发时刻</span>
         <span class="kv-v strong">${p2(r.departureHour)}:00${r.autoDeparture ? '（自动推荐）' : ''}</span></div>
       <div class="kv"><span class="kv-k">预计抵达</span>
@@ -598,7 +628,7 @@ function renderNavReport(r, stale) {
       ${r.autoDeparture && r.recommendedHour != null && r.recommendedHour !== r.departureHour
         ? `<div class="kv-note neutral">推荐出发时刻 ${p2(r.recommendedHour)}:00（全程最低分 ${r.recommendedMin}）</div>` : ''}
       ${stale ? `<div class="warn">⚠️ 数据可能已过期（离线缓存），请联网后重试</div>` : ''}
-      ${r.route.approx ? `<div class="warn">⚠️ 徒步/骑行的路径与时长按公路网估算，与实际步行/骑行速度差异较大</div>` : ''}
+      ${r.route.approx ? `<div class="warn">⚠️ 本版路径按<b>公路网</b>规划。徒步/骑行路线与真实步道、绿道不同，时长按 <b>${r.route.speedKmh} km/h</b> 估算，仅供参考。</div>` : ''}
     </div>
 
     <h2 class="sec-title">沿程 ${r.points.length} 个采样点（按预计到达时刻）</h2>
@@ -977,6 +1007,16 @@ function openTrip(id) {
 
 function pad(n) { return String(n).padStart(2, '0'); }
 
+/** 分钟 → "3 小时 20 分" / "2 天 5 小时" */
+function fmtDuration(minutes) {
+  const m = Math.max(0, Math.round(minutes));
+  if (m < 60) return `${m} 分钟`;
+  if (m < 24 * 60) return `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
+  const d = Math.floor(m / (24 * 60));
+  const h = Math.floor((m % (24 * 60)) / 60);
+  return `${d} 天 ${h} 小时`;
+}
+
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1009,9 +1049,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ---------------- 直链参数 ----------------
   const params = new URLSearchParams(location.search);
-  const loadNames = (str) => (str || '').split(/[,，、]/).map(s => s.trim()).filter(Boolean)
-    .map(findPointByName).filter(Boolean)
-    .map(p => ({ name: p.name, lat: p.lat, lon: p.lon }));
+
+  // 常见城市坐标兜底（内置点位库只有川西，直链里常用到这些）
+  const EXTRA_CITIES = {
+    '深圳': [22.5431, 114.0579], '广州': [23.1291, 113.2644], '成都': [30.5728, 104.0668],
+    '重庆': [29.5630, 106.5516], '北京': [39.9042, 116.4074], '上海': [31.2304, 121.4737],
+    '西安': [34.3416, 108.9398], '昆明': [25.0389, 102.7183], '武汉': [30.5928, 114.3055],
+    '杭州': [30.2741, 120.1551], '兰州': [36.0611, 103.8343], '西宁': [36.6171, 101.7782],
+    '拉萨': [29.6520, 91.1721], '贵阳': [26.6470, 106.6302], '长沙': [28.2282, 112.9388],
+  };
+
+  function resolveName(name) {
+    const p = findPointByName(name);
+    if (p) return { name: p.name, lat: p.lat, lon: p.lon };
+    const c = EXTRA_CITIES[name];
+    if (c) return { name, lat: c[0], lon: c[1] };
+    return null;
+  }
+
+  /** 解析 ?pts= 列表；库里找不到的先跳过（下面会尝试在线搜） */
+  function loadNames(str) {
+    return (str || '').split(/[,，、]/).map(s => s.trim()).filter(Boolean)
+      .map(resolveName).filter(Boolean);
+  }
 
   // ?pts=雅安,天全,泸定 指定点名
   const fromPts = loadNames(params.get('pts'));
@@ -1036,6 +1096,13 @@ document.addEventListener('DOMContentLoaded', () => {
     state.date = d;
     $('#inpDate').value = d;
   };
+
+  // ?mode=hike|bike|drive 指定出行方式（便于演示与测试）
+  const mq = params.get('mode');
+  if (mq && ['drive', 'hike', 'bike'].includes(mq)) {
+    state.mode = mq;
+    $$('#segMode button').forEach(b => b.classList.toggle('on', b.dataset.mode === mq));
+  }
 
   // ?view=create 直接进新建页
   if (params.get('view') === 'create') {

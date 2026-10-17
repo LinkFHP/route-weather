@@ -457,6 +457,7 @@ function analyzeNavigation(series, elevations, samples, route, departHour, dateS
       durationMin: route.duration / 60,
       approx: !!route.approx,
       profile: route.profile,
+      speedKmh: route.speedKmh,          // 徒步/骑行时为估算速度，自驾为 null
       arriveHour: useHour + route.duration / 3600,
     },
     points,

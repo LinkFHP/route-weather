@@ -15,6 +15,21 @@ const ROUTING = {
   BASE: 'https://router.project-osrm.org/route/v1',
   CACHE_TTL: 24 * 60 * 60 * 1000, // 路网几乎不变，缓存 1 天
 
+  /**
+   * 各出行方式的实际速度（km/h）
+   * 注意：OSRM 公共 demo 服务器只有汽车路网，徒步/骑行会返回与自驾相同的
+   * 距离与时长（实测深圳→成都三种 profile 都是 681km/7.9h）。
+   * 因此徒步/骑行的时长必须按下面这些速度自行换算，不能用接口返回值。
+   */
+  SPEED: {
+    drive: null,   // 用接口值（汽车路网本来就是对的）
+    hike: 4.0,     // 徒步 4 km/h（含爬升，偏保守）
+    bike: 15.0,    // 骑行 15 km/h
+  },
+
+  /** 预报有效期（天）：Open-Meteo 免费档大约 16 天，保守按 7 天算 */
+  FORECAST_HORIZON_DAYS: 7,
+
   /** 网页/徒步/骑行 → OSRM profile 名 */
   profileOf(mode) {
     if (mode === 'hike') return 'foot';
@@ -23,55 +38,81 @@ const ROUTING = {
   },
 
   /**
+   * 按出行方式换算实际时长
+   * @returns {{duration:number, speedKmh:number|null, estimated:boolean}}
+   */
+  applyMode(mode, distanceM, apiDurationSec) {
+    const spd = this.SPEED[mode];
+    if (!spd) return { duration: apiDurationSec, speedKmh: null, estimated: false };
+    // 徒步/骑行：距离 ÷ 速度
+    const duration = (distanceM / 1000) / spd * 3600;
+    return { duration, speedKmh: spd, estimated: true };
+  },
+
+  /**
    * 规划路径
    * @param {Array} pts [{name, lat, lon}] 第一个为起点，最后一个为终点，中间为途经点
    * @param {string} mode drive|hike|bike
-   * @returns {Promise<{ok:boolean, distance:number, duration:number, coords:Array, approx:boolean, error?:string}>}
+   * @returns {Promise<{ok, distance, duration, coords, approx, profile, speedKmh, estimated, overHorizon, horizonDays}>}
    */
   async fetchRoute(pts, mode) {
     if (!pts || pts.length < 2) return { ok: false, error: '至少需要起点和终点' };
 
     const profile = this.profileOf(mode);
+    // 缓存按「去程 profile + 坐标」存原始数据，换算在返回时做，
+    // 这样改速度常量不会命中旧缓存导致不一致
     const coordStr = pts.map(p => `${p.lon},${p.lat}`).join(';');
-    const key = 'rwc:route:' + profile + ':' + coordStr;
+    const key = 'rwc:route:' + coordStr;
 
-    // 缓存
+    let raw = null;
     try {
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        const { t, data } = JSON.parse(raw);
-        if (Date.now() - t < this.CACHE_TTL) {
-          return Object.assign({ ok: true, cached: true }, data);
-        }
+      const s = localStorage.getItem(key);
+      if (s) {
+        const { t, data } = JSON.parse(s);
+        if (Date.now() - t < this.CACHE_TTL) raw = data;
       }
     } catch (e) { /* ignore */ }
 
-    const url = `${this.BASE}/${profile}/${coordStr}?overview=full&geometries=geojson&steps=false`;
-
-    try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const json = await res.json();
-      if (json.code !== 'Ok' || !json.routes || !json.routes.length) {
-        throw new Error(json.message || ('路由失败: ' + json.code));
-      }
-      const r = json.routes[0];
-      const coords = r.geometry.coordinates.map(c => ({ lat: c[1], lon: c[0] }));
-      const data = {
-        distance: r.distance,     // 米
-        duration: r.duration,     // 秒
-        coords,
-        approx: mode === 'hike' || mode === 'bike',
-        profile,
-      };
+    if (!raw) {
+      const url = `${this.BASE}/${profile}/${coordStr}?overview=full&geometries=geojson&steps=false`;
       try {
-        localStorage.setItem(key, JSON.stringify({ t: Date.now(), data }));
-      } catch (e) { /* 配额满忽略 */ }
-      return Object.assign({ ok: true, cached: false }, data);
-    } catch (e) {
-      console.warn('路径规划失败：', e);
-      return { ok: false, error: e.message || String(e) };
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const json = await res.json();
+        if (json.code !== 'Ok' || !json.routes || !json.routes.length) {
+          throw new Error(json.message || ('路由失败: ' + json.code));
+        }
+        const r = json.routes[0];
+        raw = {
+          distance: r.distance,
+          apiDuration: r.duration,
+          coords: r.geometry.coordinates.map(c => ({ lat: c[1], lon: c[0] })),
+        };
+        try {
+          localStorage.setItem(key, JSON.stringify({ t: Date.now(), data: raw }));
+        } catch (e) { /* 配额满忽略 */ }
+      } catch (e) {
+        console.warn('路径规划失败：', e);
+        return { ok: false, error: e.message || String(e) };
+      }
     }
+
+    const conv = this.applyMode(mode, raw.distance, raw.apiDuration);
+    const days = conv.duration / 3600 / 24;
+
+    return {
+      ok: true,
+      distance: raw.distance,           // 米（路网距离）
+      duration: conv.duration,          // 秒（已按出行方式换算）
+      coords: raw.coords,
+      profile,                          // 实际调用的 OSRM profile
+      approx: conv.estimated,           // true = 时长是自行估算的
+      speedKmh: conv.speedKmh,
+      // 是否超出预报有效期（超出则整体评估无意义）
+      overHorizon: days > this.FORECAST_HORIZON_DAYS,
+      horizonDays: this.FORECAST_HORIZON_DAYS,
+      travelDays: days,
+    };
   },
 };
 
