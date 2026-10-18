@@ -182,14 +182,50 @@ const MapCtl = {
   create: null,
   baseLayers: [],
 
+  /** 是否桌面端（有精确指针、支持 hover） */
+  isDesktop() {
+    try {
+      return window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+    } catch (e) {
+      return true;
+    }
+  },
+
   _makeMap(containerId) {
-    return L.map(containerId, {
+    const desktop = this.isDesktop();
+
+    const map = L.map(containerId, {
       zoomControl: false,
       attributionControl: true,
-      scrollWheelZoom: false,
-      doubleClickZoom: false,
+      // 滚轮与双击缩放：桌面端才启用（触屏用双指捏合，避免劫持页面滚动）
+      scrollWheelZoom: false,      // 由 hover 动态开关，见下
+      doubleClickZoom: desktop,
       tap: true,
+      // 缩放范围：太小没意义，太大瓦片会糊
+      minZoom: 4,
+      maxZoom: 17,
     });
+
+    // 缩放按钮（桌面端显示，触屏由 CSS 隐藏）
+    try {
+      const zoom = L.control.zoom({
+        position: 'topleft',
+        zoomInTitle: '放大',
+        zoomOutTitle: '缩小',
+      });
+      zoom.addTo(map);
+      map.__zoomCtl = zoom;
+    } catch (e) {
+      console.warn('[map] 缩放控件添加失败：', e);
+    }
+
+    if (desktop) {
+      // 鼠标移入地图才接管滚轮，移出立刻释放 —— 否则页面滚到地图上就卡住
+      map.on('mouseover', () => { try { map.scrollWheelZoom.enable(); } catch (e) {} });
+      map.on('mouseout', () => { try { map.scrollWheelZoom.disable(); } catch (e) {} });
+    }
+
+    return map;
   },
 
   layerIndex: 0,

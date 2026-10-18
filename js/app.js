@@ -216,7 +216,9 @@ function renderPointList() {
     const role = i === 0 ? '起点' : (i === state.points.length - 1 ? '终点' : '途经');
     const roleCls = i === 0 ? 'start' : (i === state.points.length - 1 ? 'end' : 'mid');
     return `
-      <div class="pt-row">
+      <div class="pt-row" data-i="${i}">
+        <span class="pt-drag" data-i="${i}" role="button" tabindex="0"
+              aria-label="拖动调整顺序" title="拖动调整顺序">⋮⋮</span>
         <span class="pt-role ${roleCls}">${role}</span>
         <span class="pt-name">${escapeHtml(p.name)}</span>
         <span class="pt-coord">${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}</span>
@@ -230,7 +232,92 @@ function renderPointList() {
       renderPointList();
     });
   });
+
+  bindDragReorder(el);
   markCreateMapDirty();
+}
+
+/**
+ * 点位拖拽排序
+ * 用 Pointer Events，桌面与触屏同一套逻辑；只在「⋮⋮」把手上触发，
+ * 所以不会影响页面正常滚动。
+ */
+function bindDragReorder(container) {
+  let dragIdx = -1;
+  let startY = 0;
+  let dragging = false;
+  let targetIdx = -1;
+
+  const rows = () => Array.from(container.querySelectorAll('.pt-row'));
+  const clearMarks = () => {
+    rows().forEach(r => r.classList.remove('dragging', 'drop-target'));
+    document.body.classList.remove('reordering');
+  };
+
+  container.querySelectorAll('.pt-drag').forEach(handle => {
+    handle.addEventListener('pointerdown', (e) => {
+      if (state.points.length < 2) return;
+      e.preventDefault();
+      dragIdx = Number(handle.dataset.i);
+      startY = e.clientY;
+      dragging = false;
+      targetIdx = dragIdx;
+      try { handle.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+
+    handle.addEventListener('pointermove', (e) => {
+      if (dragIdx < 0) return;
+      const dy = e.clientY - startY;
+      if (!dragging && Math.abs(dy) < 8) return;
+
+      if (!dragging) {
+        dragging = true;
+        document.body.classList.add('reordering');
+        rows()[dragIdx]?.classList.add('dragging');
+      }
+
+      // 用指针 Y 与各行中线比较，得出应插入的位置
+      const list = rows();
+      let idx = list.length - 1;
+      for (let i = 0; i < list.length; i++) {
+        const r = list[i].getBoundingClientRect();
+        if (e.clientY < r.top + r.height / 2) { idx = i; break; }
+      }
+      if (idx !== targetIdx) {
+        targetIdx = idx;
+        list.forEach((r, i) => {
+          r.classList.toggle('drop-target', i === targetIdx && i !== dragIdx);
+        });
+      }
+    });
+
+    const finish = (e) => {
+      if (dragIdx < 0) return;
+      try { handle.releasePointerCapture(e.pointerId); } catch (err) {}
+      const from = dragIdx;
+      const to = targetIdx;
+      const wasDragging = dragging;
+      dragIdx = -1;
+      dragging = false;
+      clearMarks();
+
+      if (!wasDragging || from === to || to < 0) return;
+
+      const [moved] = state.points.splice(from, 1);
+      state.points.splice(to, 0, moved);
+      renderPointList();
+      toast(`已把「${moved.name}」移到第 ${to + 1} 位`);
+    };
+
+    handle.addEventListener('pointerup', finish);
+    handle.addEventListener('pointercancel', (e) => {
+      if (dragIdx < 0) return;
+      try { handle.releasePointerCapture(e.pointerId); } catch (err) {}
+      dragIdx = -1;
+      dragging = false;
+      clearMarks();
+    });
+  });
 }
 /* ---------------- 点位选择弹层 ---------------- */
 
